@@ -1,119 +1,89 @@
 import asyncio
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import CommandStart, Command
-from collections import defaultdict
+import logging
+import sys
+import wikipedia
+import requests
+from aiogram import Bot, Dispatcher, types
+from aiogram.enums import ParseMode
+from aiogram.filters import Command, CommandStart
+from aiogram.types import Message
+from aiogram.client.default import DefaultBotProperties
 
-BOT_TOKEN = "7701647980:AAHdiU2wIA8wG9TYznd8TFSgi-iNC-SPTq4"
+API_TOKEN = "7953453670:AAEf4z0UwZPi9CCPGBpSQFh4fV92KAscWW0"
+PEXELS_API_KEY = "rPEFYdGEJCEzlPtrnYtU0snhGDlPPl4zl6aqxQJ1opAFMqE1WhbldahD"
 
-bot = Bot(BOT_TOKEN)
+wikipedia.set_lang('uz')
+
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-active_chats = {}
 
-@dp.message(CommandStart(deep_link=True))
-async def start_with_link(message: Message, command: CommandStart):
-    user_id = message.from_user.id
-    args = command.args
 
-    if args.startswith("chat_"):
-        target_id = int(args.split("_")[1])
-
-        if user_id == target_id:
-            return await message.answer("❌ Вы не можете отправить анонимное сообщение самому себе.")
-
-        active_chats[user_id] = target_id
-        active_chats[target_id] = user_id
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="❌ Завершить чат", callback_data="end_chat")]
-            ]
-        )
-
-        await bot.send_message(user_id, "Вы теперь в анонимном чате. Напишите сообщение!", reply_markup=keyboard)
-        await bot.send_message(target_id, "Кто-то пишет вам анонимно!", reply_markup=keyboard)
+def search_pexels_images(query, count=2):
+    headers = {
+        "Authorization": PEXELS_API_KEY
+    }
+    params = {
+        "query": query,
+        "per_page": count
+    }
+    response = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        return [photo["src"]["medium"] for photo in data.get("photos", [])]
     else:
-        link = f"https://t.me/{(await bot.get_me()).username}?start=chat_{user_id}"
+        return []
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📤 Поделиться", switch_inline_query=link)]
-            ]
-        )
 
-        await message.answer(
-            f"📨 Хотите получать анонимные сообщения от друзей?\n\n"
-            f"🔗 Ваша ссылка:\n{link}\n\n"
-            f"☝️Запости эту ссылку в Telegram-канале, или своём профиле",
-            reply_markup=keyboard
-        )
-
-@dp.message(Command("start"))
-async def start_without_args(message: Message):
-    user_id = message.from_user.id
-    link = f"https://t.me/{(await bot.get_me()).username}?start=chat_{user_id}"
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Поделиться", switch_inline_query=link)]
-        ]
-    )
-
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
     await message.answer(
-        f"📨 Хотите получать анонимные сообщения от друзей?\n\n"
-        f"🔗 Ваша ссылка:\n{link}\n\n"
-        f"☝️Запости эту ссылку в Telegram-канале, или своём профиле",
-        reply_markup=keyboard
+        f"Salom, {message.from_user.first_name}! Habarchi Botiga xush kelibsiz!\n"
+        "Qandaydir mavzu haqida ma’lumot olish uchun faqat mavzuni yozing.\n"
+        "Masalan: <b>O'zbekiston</b>"
     )
 
-@dp.message(F.text & ~F.via_bot)
-async def handle_message(message: Message):
-    user_id = message.from_user.id
-    if user_id in active_chats:
-        target_id = active_chats[user_id]
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"reply_{user_id}")]
-            ]
-        )
+@dp.message(Command("about"))
+async def cmd_about(message: Message):
+    await message.answer(
+        f"Ushbu bot sizga Vikipediyadan ma’lumot va mavzuga oid Pexels rasmlarni yuboradi. Mavzuni kiriting va rasm bilan tanishing!"
+    )
 
-        await bot.send_message(chat_id=target_id, text=f"📨 Получено сообщение!\n\n  {message.text}", reply_markup=keyboard)
-        await message.answer("✅ Сообщение отправлено!")
-    else:
-        await message.answer("❌ Вы сейчас ни с кем не в чате.")
 
-@dp.callback_query(F.data.startswith("reply_"))
-async def reply_callback(query: CallbackQuery):
-    from_user = query.from_user.id
-    target_id = int(query.data.split("_")[1])
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        f" Salom {message.from_user.first_name}, iltimos qaysi muammoga yechim topmoqchi ekaningizni yozing")
 
-    active_chats[from_user] = target_id
-    active_chats[target_id] = from_user
 
-    await bot.send_message(chat_id=from_user, text="✍️ Напишите ваш ответ:")
-    await query.answer()
+@dp.message()
+async def wikipedia_handler(message: types.Message):
+    try:
+        query = message.text
+        summary = wikipedia.summary(query)
+        await message.answer(f"<b>{query}</b> haqida ma’lumot:\n{summary}")
 
-@dp.callback_query(F.data == "end_chat")
-async def end_chat(query: CallbackQuery):
-    user_id = query.from_user.id
+        images = search_pexels_images(query)
+        if images:
+            for img_url in images:
+                await message.answer_photo(img_url)
+        else:
+            await message.answer("Afsus, bu mavzu bo‘yicha rasm topilmadi.")
 
-    if user_id in active_chats:
-        target_id = active_chats[user_id]
-        del active_chats[user_id]
-        del active_chats[target_id]
+    except wikipedia.exceptions.DisambiguationError as e:
+        await message.answer(f"Bu mavzu bir nechta ma'noga ega:\n<b>{', '.join(e.options[:5])}</b>")
+    except wikipedia.exceptions.PageError:
+        await message.answer("Bunday mavzu topilmadi. Iltimos, boshqa so‘zni kiriting.")
+    except Exception as e:
+        await message.answer(f"Xatolik yuz berdi")
 
-        await bot.send_message(chat_id=target_id, text="❌ Анонимный чат завершён.")
-        await bot.send_message(chat_id=user_id, text="❌ Чат завершён.")
-    else:
-        await query.message.answer("❌ Вы ни с кем не в чате.")
-
-    await query.answer()
 
 async def main():
-    print("Bot ishga tushdi !!!")
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    print("Bot ishga tushdi!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
